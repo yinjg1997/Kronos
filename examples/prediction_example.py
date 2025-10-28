@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -84,6 +86,41 @@ def plot_prediction2(kline_df, pred_df):
     plt.show()
 
 
+def get_input_data(lookback: int, pred_len: int,is_compare: bool) -> pd.DataFrame:
+    """
+    将接口数据处理为 Kronos 可用的数据
+    """
+    with open('./data/futures_data.json', 'r') as f:
+        futures_data = json.load(f)
+
+    datas = futures_data['data']
+    if is_compare:
+        datas = datas[-lookback-pred_len:]
+    else:
+        datas = datas[-lookback]
+
+    print(len(datas))
+    # 将JSON数据转换为DataFrame
+    df = pd.DataFrame(datas)
+
+    # 补充 timestamps 字段
+    df["timestamps"] = pd.to_datetime(df["date"])
+    # 补充缺失字段
+    df["amount"] = 0
+
+    if not is_compare:
+        # 根据现有日期生成之后的120个日期, 为预测留 120 个位置 pred_len
+        last_date = df["timestamps"].iloc[-1]  # 获取最后一个日期
+        new_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=pred_len)
+        new_rows = pd.DataFrame({
+            "timestamps": new_dates
+        })
+        # 3. 合并到原DataFrame
+        df = pd.concat([df, new_rows], ignore_index=True)
+
+    return df
+
+
 # 1. Load Model and Tokenizer
 tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
 model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
@@ -92,11 +129,11 @@ model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
 predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
 
 # 3. Prepare Data
-df = pd.read_csv("./data/FU0.csv")
-df['timestamps'] = pd.to_datetime(df['timestamps'])
-
 lookback = 400
 pred_len = 120
+
+df = get_input_data(lookback, pred_len, is_compare=True)
+df['timestamps'] = pd.to_datetime(df['timestamps'])
 
 x_df = df.loc[:lookback - 1, ['open', 'high', 'low', 'close', 'volume', 'amount']]
 x_timestamp = df.loc[:lookback - 1, 'timestamps']
@@ -112,7 +149,7 @@ pred_df = predictor.predict(
     x_timestamp=x_timestamp,
     y_timestamp=y_timestamp,
     pred_len=pred_len,
-    T=1.0,
+    T=1,
     top_p=0.9,
     sample_count=1,
     verbose=True
